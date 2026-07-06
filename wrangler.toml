@@ -12,11 +12,11 @@ directory = "./dist"
 binding = "ASSETS"
 
 # Bind Cloudflare KV Namespace to persist diesel logs, sites, and deliveries
-[[kv_namespaces]]
-binding = "DATA_KV"
-# Note: For production, you will create a KV namespace in your Cloudflare dashboard 
-# and paste its real ID here:
-id = "YOUR_CLOUDFLARE_KV_NAMESPACE_ID"
+# Once you have created a KV namespace in your Cloudflare dashboard (under Workers & Pages > KV),
+# uncomment the lines below and paste your real ID:
+# [[kv_namespaces]]
+# binding = "DATA_KV"
+# id = "YOUR_CLOUDFLARE_KV_NAMESPACE_ID"
 
 # Environment Variables
 [vars]
