@@ -1,0 +1,23 @@
+# Cloudflare Pages / Workers Deployment Configuration
+name = "kmc-ledger-app"
+compatibility_date = "2024-04-01"
+
+# Enable modern Node.js compatibility APIs
+compatibility_flags = [ "nodejs_compat" ]
+
+# Pages-specific configuration
+[pages_build_config]
+directory = "dist"
+build_command = "npm run build"
+
+# Bind Cloudflare KV Namespace to persist diesel logs, sites, and deliveries
+[[kv_namespaces]]
+binding = "DATA_KV"
+# Note: For production, you will create a KV namespace in your Cloudflare dashboard 
+# and paste its real ID here:
+id = "YOUR_CLOUDFLARE_KV_NAMESPACE_ID"
+
+# Environment Variables
+[vars]
+# You can set custom public variables here if needed
+VITE_ENV = "production"

@@ -1,0 +1,6 @@
+{
+  "name": "KMC Construction",
+  "description": "Internal diesel tracking and ledger platform for KMC Construction active sites, enabling fuel logs submission and classified analytical reports.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

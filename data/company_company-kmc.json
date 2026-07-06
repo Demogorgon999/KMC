@@ -1,0 +1,48 @@
+{
+  "sites": [
+    {
+      "id": "site-starter-01",
+      "companyId": "company-kmc",
+      "name": "KMC Head Office Yard",
+      "code": "KMC-HOY",
+      "location": "Johannesburg, South Africa",
+      "status": "active",
+      "createdAt": "2026-06-30T12:44:30.869Z",
+      "closedAt": null
+    }
+  ],
+  "logs": [
+    {
+      "id": "log-starter-01",
+      "companyId": "company-kmc",
+      "siteId": "site-starter-01",
+      "quantityLitres": 0,
+      "vehicleNumber": "STARTER-TEST-01",
+      "vehicleMeterReading": "0",
+      "dateTime": "2026-06-30T12:44:30.869Z",
+      "agentName": "System Initialization",
+      "logSheetFilename": null,
+      "logSheetBase64": null,
+      "notes": "System starter placeholder record to initialize collection",
+      "createdAt": "2026-06-30T12:44:30.869Z"
+    }
+  ],
+  "deliveries": [
+    {
+      "id": "delivery-starter-01",
+      "companyId": "company-kmc",
+      "siteId": "site-starter-01",
+      "deliveredBy": "Supplier Logistics",
+      "deliveryNote": "DN-STARTER",
+      "quantityLitres": 0,
+      "kmpOrder": "KMP-0000",
+      "openingDip": 0,
+      "closingDip": 0,
+      "attachmentFilename": null,
+      "attachmentBase64": null,
+      "notes": "System starter placeholder record to initialize collection",
+      "createdAt": "2026-06-30T12:44:30.869Z",
+      "dateTime": "2026-06-30T12:44:30.869Z"
+    }
+  ]
+}

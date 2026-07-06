@@ -1,0 +1,159 @@
+{
+  "entities": {
+    "CompanyProfile": {
+      "title": "CompanyProfile",
+      "description": "Corporate workspace profiles of on-platform tenants",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "legalName": { "type": "string" },
+        "logoInitials": { "type": "string" },
+        "tagline": { "type": "string" },
+        "adminKey": { "type": "string" },
+        "primaryColor": { "type": "string" },
+        "secondaryColor": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "logoUrl": { "type": "string" },
+        "registrationNumber": { "type": "string" }
+      },
+      "required": ["id", "name", "legalName", "logoInitials", "tagline", "adminKey", "createdAt"]
+    },
+    "User": {
+      "title": "User",
+      "description": "Registered and authorized corporate employees",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "email": { "type": "string" },
+        "name": { "type": "string" },
+        "passwordHash": { "type": "string" },
+        "role": { "type": "string", "enum": ["management", "agent"] },
+        "createdAt": { "type": "string" },
+        "status": { "type": "string", "enum": ["approved", "pending"] },
+        "companyId": { "type": "string" }
+      },
+      "required": ["id", "email", "name", "passwordHash", "role", "createdAt"]
+    },
+    "ConstructionSite": {
+      "title": "ConstructionSite",
+      "description": "Registered work projects where fuel depletion occur",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "companyId": { "type": "string" },
+        "name": { "type": "string" },
+        "code": { "type": "string" },
+        "location": { "type": "string" },
+        "status": { "type": "string", "enum": ["active", "closed"] },
+        "createdAt": { "type": "string" },
+        "closedAt": { "type": "string" }
+      },
+      "required": ["id", "companyId", "name", "code", "location", "status", "createdAt"]
+    },
+    "DieselLog": {
+      "title": "DieselLog",
+      "description": "Individual fuel extraction and vehicle tanking ticket",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "companyId": { "type": "string" },
+        "siteId": { "type": "string" },
+        "quantityLitres": { "type": "number" },
+        "vehicleNumber": { "type": "string" },
+        "vehicleMeterReading": { "type": "string" },
+        "dateTime": { "type": "string" },
+        "agentName": { "type": "string" },
+        "logSheetFilename": { "type": "string" },
+        "logSheetBase64": { "type": "string" },
+        "notes": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "companyId", "siteId", "quantityLitres", "vehicleNumber", "dateTime", "agentName", "createdAt"]
+    },
+    "DieselDelivery": {
+      "title": "DieselDelivery",
+      "description": "Bulk delivery refuel drop and variance logging",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "companyId": { "type": "string" },
+        "siteId": { "type": "string" },
+        "deliveredBy": { "type": "string" },
+        "deliveryNote": { "type": "string" },
+        "quantityLitres": { "type": "number" },
+        "kmpOrder": { "type": "string" },
+        "openingDip": { "type": "number" },
+        "closingDip": { "type": "number" },
+        "attachmentFilename": { "type": "string" },
+        "attachmentBase64": { "type": "string" },
+        "dateTime": { "type": "string" },
+        "agentName": { "type": "string" },
+        "isOverridden": { "type": "boolean" },
+        "overrideReason": { "type": "string" },
+        "overriddenBy": { "type": "string" },
+        "createdAt": { "type": "string" }
+      },
+      "required": ["id", "companyId", "siteId", "deliveredBy", "deliveryNote", "quantityLitres", "kmpOrder", "openingDip", "closingDip", "dateTime", "agentName", "isOverridden", "createdAt"]
+    },
+    "MonthlyDieselRate": {
+      "title": "MonthlyDieselRate",
+      "description": "Corporate fuel cost rate configured by managers with an associated effective date",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "companyId": { "type": "string" },
+        "effectiveDate": { "type": "string" },
+        "rate": { "type": "number" },
+        "updatedAt": { "type": "string" },
+        "updatedBy": { "type": "string" }
+      },
+      "required": ["id", "companyId", "effectiveDate", "rate", "updatedAt", "updatedBy"]
+    },
+    "ErrorLog": {
+      "title": "ErrorLog",
+      "description": "Captured synchronization or application runtime errors",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "companyId": { "type": "string" },
+        "timestamp": { "type": "string" },
+        "userName": { "type": "string" },
+        "errorType": { "type": "string" },
+        "message": { "type": "string" },
+        "payloadInfo": { "type": "string" }
+      },
+      "required": ["id", "timestamp", "message"]
+    }
+  },
+  "firestore": {
+    "/companies/{companyId}": {
+      "schema": "CompanyProfile",
+      "description": "Profile detail for a tenant corporate identity"
+    },
+    "/users/{userId}": {
+      "schema": "User",
+      "description": "Registered and approved member profiles"
+    },
+    "/sites/{siteId}": {
+      "schema": "ConstructionSite",
+      "description": "Physical projects linked to specific parent companies"
+    },
+    "/logs/{logId}": {
+      "schema": "DieselLog",
+      "description": "Consumption reports registered by agents/workers at construction sites"
+    },
+    "/deliveries/{deliveryId}": {
+      "schema": "DieselDelivery",
+      "description": "Bulk diesel deliveries dropped into site tanks"
+    },
+    "/rates/{rateId}": {
+      "schema": "MonthlyDieselRate",
+      "description": "Official corporate diesel rate per month"
+    },
+    "/error_logs/{logId}": {
+      "schema": "ErrorLog",
+      "description": "Logs of runtime sync errors to aid debugging"
+    }
+  }
+}

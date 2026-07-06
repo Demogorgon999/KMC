@@ -1,0 +1,51 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Global catch-all default deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    // Companies Collection
+    match /companies/{companyId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Users Collection
+    match /users/{userId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Sites Collection
+    match /sites/{siteId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Consumption Logs Collection
+    match /logs/{logId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Bulk Deliveries Collection
+    match /deliveries/{deliveryId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Diesel Monthly Rates Collection
+    match /rates/{rateId} {
+      allow read: if true;
+      allow write: if true;
+    }
+
+    // Error Logs Collection
+    match /error_logs/{logId} {
+      allow read: if true;
+      allow write: if true;
+    }
+  }
+}
