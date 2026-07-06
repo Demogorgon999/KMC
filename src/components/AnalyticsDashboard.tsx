@@ -781,6 +781,285 @@ export default function AnalyticsDashboard({
           </div>
         );
       }
+      if (groupBySite) {
+        return (
+          <div className="p-3 sm:p-6 space-y-4 sm:space-y-6 animate-fade-in">
+            {sites.map((site) => {
+              const siteDeliveriesSubset = filteredDeliveries.filter(d => d.siteId === site.id);
+              if (siteDeliveriesSubset.length === 0) return null;
+              const siteSum = siteDeliveriesSubset.reduce((acc, curr) => acc + (curr.quantityLitres || 0), 0);
+
+              return (
+                <div key={site.id} className="border border-[#1E273D] rounded-xl overflow-hidden shadow-sm bg-[#111625]">
+                  {/* Site Header Row */}
+                  <div className="bg-[#181F35] border-b border-[#232F4C] px-3.5 py-3 sm:px-4 sm:py-3 flex items-center justify-between gap-2.5">
+                    <div>
+                      <div className="flex items-center gap-1.5 sm:gap-2 flex-wrap sm:flex-nowrap">
+                        <span className="font-mono text-[10px] sm:text-xs font-extrabold bg-[#138A8E]/15 text-[#11E2BC] px-2 py-0.5 sm:px-2.5 sm:py-1 rounded border border-[#138A8E]/25">
+                          {site.code}
+                        </span>
+                        <h4 className="font-sans font-bold text-zinc-200 text-sm sm:text-base leading-tight">{site.name}</h4>
+                      </div>
+                      <p className="text-[10px] sm:text-xs text-zinc-400 mt-1 font-sans leading-none">{site.location}</p>
+                    </div>
+                    <div className="text-right shrink-0">
+                      <p className="text-[9px] sm:text-xs font-semibold text-zinc-500 uppercase tracking-widest leading-none">Delivered Total</p>
+                      <p className="font-mono font-bold text-[#11E2BC] text-sm sm:text-base mt-2">{Number((siteSum || 0).toFixed(1))} L</p>
+                    </div>
+                  </div>
+
+                  {/* Desktop view table within each site */}
+                  <div className="hidden md:block overflow-x-auto relative">
+                    <table className="w-full text-left border-collapse text-xs">
+                      <thead>
+                        <tr className="border-b border-[#232F4C] text-[10px] text-zinc-550 font-extrabold uppercase tracking-wider bg-[#111625]/20">
+                          <th className="py-2.5 px-4 font-sans">Date/Time</th>
+                          <th className="py-2.5 px-4 font-sans">Transporter</th>
+                          <th className="py-2.5 px-4 font-sans">Delivery Note No.</th>
+                          <th className="py-2.5 px-4 text-right font-sans">Invoice Litres</th>
+                          <th className="py-2.5 px-4 text-center font-sans">Dips (Open/Close)</th>
+                          <th className="py-2.5 px-4 text-right font-sans">Margin Variance</th>
+                          <th className="py-2.5 px-4 font-sans">KMP Order #</th>
+                          <th className="py-2.5 px-4 text-center font-sans font-bold">Inbound Slip</th>
+                          <th className="py-2.5 px-4 text-right font-sans">Action</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-[#1D263B]/20 text-zinc-300">
+                        {siteDeliveriesSubset.map((delivery) => {
+                          const diff = ((delivery.closingDip || 0) - (delivery.openingDip || 0)) - (delivery.quantityLitres || 0);
+                          const isPerfect = Math.abs(diff) < 0.1;
+                          const pct = (delivery.quantityLitres || 0) > 0 ? (diff / (delivery.quantityLitres || 0)) * 100 : 0;
+                          return (
+                            <tr key={delivery.id} className="hover:bg-white/5 transition duration-150">
+                              <td className="py-2 px-4 whitespace-nowrap text-zinc-455 font-mono">
+                                {new Date(delivery.dateTime).toLocaleString('en-ZA', { dateStyle: 'short', timeStyle: 'short' })}
+                              </td>
+                              <td className="py-2 px-4 font-semibold text-zinc-150">
+                                {delivery.deliveredBy}
+                              </td>
+                              <td className="py-2 px-4 font-mono font-bold text-center text-zinc-300 uppercase select-all">
+                                {delivery.deliveryNote}
+                              </td>
+                              <td className="py-2 px-4 text-right font-mono font-bold text-zinc-200">
+                                {(delivery.quantityLitres || 0).toFixed(1)} L
+                              </td>
+                              <td className="py-2 px-4 text-center font-mono text-zinc-455">
+                                Open: <span className="text-zinc-300 font-bold">{(delivery.openingDip || 0).toFixed(0)}L</span> | Close: <span className="text-zinc-300 font-bold">{(delivery.closingDip || 0).toFixed(0)}L</span>
+                              </td>
+                              <td className="py-2 px-4 text-right">
+                                <div className="flex flex-col items-end leading-none">
+                                  {isPerfect ? (
+                                    <span className="text-[10px] font-bold text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-[#107F6E]/40 uppercase tracking-wider">
+                                      Perfect Match
+                                    </span>
+                                  ) : delivery.isOverridden ? (
+                                    <div className="flex flex-col items-end leading-none">
+                                      <span className="text-[10px] font-bold text-sky-400 bg-sky-500/10 px-2 py-0.5 rounded border border-sky-500/25 uppercase flex items-center gap-0.5">
+                                        <ShieldCheck className="h-3 w-3" /> Overridden
+                                      </span>
+                                      <span className="text-[8px] text-zinc-500 italic max-w-[120px] truncate mt-1">
+                                        {delivery.overrideReason}
+                                      </span>
+                                    </div>
+                                  ) : (
+                                    <div className="flex flex-col items-end">
+                                      <span className="text-[10px] font-extrabold text-rose-400 bg-rose-955/40 px-2 py-0.5 rounded border border-[#FF3B30]/30 uppercase tracking-wider flex items-center gap-1 select-none animate-pulse">
+                                        <AlertCircle className="h-3 w-3 text-rose-400 shrink-0" />
+                                        {diff < 0 ? 'Under' : 'Over'} {(Math.abs(diff) || 0).toFixed(1)} L
+                                      </span>
+                                      <span className="text-[9px] text-rose-400 font-mono font-extrabold mt-1">({pct < 0 ? '' : '+'}{(pct || 0).toFixed(1)}% margin)</span>
+                                    </div>
+                                  )}
+                                </div>
+                              </td>
+                              <td className="py-2 px-4 font-mono font-bold text-zinc-300 uppercase">
+                                <div className="flex flex-col">
+                                  <span>{delivery.kmpOrder}</span>
+                                  <span className="text-[9.5px] text-zinc-400 font-sans font-normal">By: {delivery.agentName}</span>
+                                </div>
+                              </td>
+                              <td className="py-2 px-4 text-center">
+                                {delivery.attachmentBase64 ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => setActivePreviewDelivery(delivery)}
+                                    className="mx-auto p-1 px-2 text-[#138A8E] hover:text-[#1CA8AD] hover:bg-[#138A8E]/10 border border-[#138A8E]/25 rounded transition inline-flex items-center gap-1 cursor-pointer"
+                                  >
+                                    <Paperclip className="h-3.5 w-3.5 shrink-0" />
+                                    <span className="text-[9px] font-extrabold uppercase font-sans">View</span>
+                                  </button>
+                                ) : (
+                                  <span className="text-zinc-650 italic">None</span>
+                                )}
+                              </td>
+                              <td className="py-2 px-4 text-right">
+                                <div className="flex items-center justify-end gap-2">
+                                  {!isPerfect && !delivery.isOverridden && onOverrideDelivery && (
+                                    <button
+                                      type="button"
+                                      onClick={() => setOverrideModal({
+                                        isOpen: true,
+                                        deliveryId: delivery.id,
+                                        siteName: site.name,
+                                        transporter: delivery.deliveredBy,
+                                        variance: diff,
+                                        reason: ''
+                                      })}
+                                      className="px-2 py-1 text-xs font-black text-[#E5B830] bg-[#E5B830]/10 hover:bg-[#E5B830]/20 border border-[#E5B830]/25 hover:border-[#E5B830]/40 rounded transition uppercase text-[10px] tracking-wide cursor-pointer flex items-center gap-0.5"
+                                    >
+                                      <ShieldAlert className="h-3 w-3 text-[#E5B830] inline shrink-0" />
+                                      Override
+                                    </button>
+                                  )}
+
+                                  {(currentUser?.role === 'management' || isDeveloper) && onDeleteDelivery && (
+                                    <button
+                                      type="button"
+                                      onClick={() => {
+                                        triggerConfirm({
+                                          title: 'Delete Fuel Bulk Delivery Audit',
+                                          message: `Are you sure you want to permanently delete this inbound bulk delivery of ${(delivery.quantityLitres || 0).toFixed(1)} L from transporter ${delivery.deliveredBy} for site ${site.name}? This action is irreversible.`,
+                                          confirmLabel: 'Delete Delivery Note',
+                                          variant: 'danger',
+                                          onConfirm: () => onDeleteDelivery(delivery.id),
+                                        });
+                                      }}
+                                      className="p-1 px-1.5 text-rose-400 hover:text-rose-300 rounded hover:bg-[#FF3B30]/10 transition cursor-pointer"
+                                      title="Delete delivery log"
+                                    >
+                                      <Trash2 className="h-3.5 w-3.5" />
+                                    </button>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          );
+                        })}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Mobile view within each site */}
+                  <div className="block md:hidden divide-y divide-[#1D263B]/40 text-sm">
+                    {siteDeliveriesSubset.map((delivery) => {
+                      const diff = ((delivery.closingDip || 0) - (delivery.openingDip || 0)) - (delivery.quantityLitres || 0);
+                      const isPerfect = Math.abs(diff) < 0.1;
+                      const pct = (delivery.quantityLitres || 0) > 0 ? (diff / (delivery.quantityLitres || 0)) * 100 : 0;
+                      return (
+                        <div key={delivery.id} className="p-4 space-y-3 hover:bg-white/5 transition">
+                          <div className="flex items-center justify-between gap-1">
+                            <span className="text-zinc-500 text-[10px] font-mono">
+                              {new Date(delivery.dateTime).toLocaleString('en-ZA', { dateStyle: 'short', timeStyle: 'short' })}
+                            </span>
+                            <span className="font-mono text-xs font-bold text-zinc-100">
+                              {(delivery.quantityLitres || 0).toFixed(1)} L
+                            </span>
+                          </div>
+                          <div className="grid grid-cols-2 gap-2 text-[11px]">
+                            <div>
+                              <span className="text-zinc-500 block uppercase text-[8px] font-mono">Transporter</span>
+                              <span className="text-zinc-300 font-medium truncate block max-w-[110px]">
+                                {delivery.deliveredBy}
+                              </span>
+                            </div>
+                            <div>
+                              <span className="text-zinc-500 block uppercase text-[8px] font-mono">Delivery Note</span>
+                              <span className="text-zinc-300 font-mono font-bold uppercase block select-all">
+                                {delivery.deliveryNote}
+                              </span>
+                            </div>
+                            <div>
+                              <span className="text-zinc-500 block uppercase text-[8px] font-mono">Dips</span>
+                              <span className="text-zinc-300 font-mono">
+                                Open: {(delivery.openingDip || 0).toFixed(0)} | Close: {(delivery.closingDip || 0).toFixed(0)}
+                              </span>
+                            </div>
+                            <div>
+                              <span className="text-zinc-500 block uppercase text-[8px] font-mono">KMP Order</span>
+                              <span className="text-zinc-300 font-mono uppercase">
+                                {delivery.kmpOrder}
+                              </span>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center justify-between gap-3 pt-2 border-t border-[#1E273D]/30">
+                            <div>
+                              {isPerfect ? (
+                                <span className="text-[9px] font-bold text-emerald-400 bg-emerald-500/10 px-1.5 py-0.5 rounded border border-[#107F6E]/30 uppercase">
+                                  Match
+                                </span>
+                              ) : delivery.isOverridden ? (
+                                <div className="flex flex-col items-start leading-none">
+                                  <span className="text-[9px] font-bold text-sky-400 bg-sky-500/10 px-1.5 py-0.5 rounded border border-sky-500/25 uppercase flex items-center gap-0.5">
+                                    <ShieldCheck className="h-2.5 w-2.5" /> Overridden
+                                  </span>
+                                </div>
+                              ) : (
+                                <span className="text-[9px] font-extrabold text-rose-400 bg-rose-955/40 px-1.5 py-0.5 rounded border border-[#FF3B30]/30 uppercase flex items-center gap-0.5">
+                                  <AlertCircle className="h-2.5 w-2.5 text-rose-450" />
+                                  {diff < 0 ? 'Under' : 'Over'} {(Math.abs(diff) || 0).toFixed(0)} L
+                                </span>
+                              )}
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                              {delivery.attachmentBase64 ? (
+                                <button
+                                  type="button"
+                                  onClick={() => setActivePreviewDelivery(delivery)}
+                                  className="px-1.5 py-0.5 text-[9px] text-[#138A8E] hover:text-[#1CA8AD] hover:bg-[#138A8E]/10 border border-[#138A8E]/25 rounded transition flex items-center gap-0.5 cursor-pointer"
+                                >
+                                  <Paperclip className="h-3 shrink-0" />
+                                  <span className="text-[8px] font-black uppercase">Slip</span>
+                                </button>
+                              ) : null}
+
+                              {!isPerfect && !delivery.isOverridden && onOverrideDelivery && (
+                                <button
+                                  type="button"
+                                  onClick={() => setOverrideModal({
+                                    isOpen: true,
+                                    deliveryId: delivery.id,
+                                    siteName: site.name,
+                                    transporter: delivery.deliveredBy,
+                                    variance: diff,
+                                    reason: ''
+                                  })}
+                                  className="px-1.5 py-0.5 text-[9px] text-[#E5B830] bg-[#E5B830]/10 hover:bg-[#E5B830]/20 border border-[#E5B830]/25 rounded transition flex items-center gap-0.5 cursor-pointer uppercase text-[8px] font-black"
+                                >
+                                  <ShieldAlert className="h-2.5 w-2.5 text-[#E5B830]" />
+                                  Override
+                                </button>
+                              )}
+
+                              {(currentUser?.role === 'management' || isDeveloper) && onDeleteDelivery && (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    triggerConfirm({
+                                      title: 'Delete Fuel Bulk Delivery Audit',
+                                      message: `Are you sure you want to permanently delete this inbound bulk delivery of ${(delivery.quantityLitres || 0).toFixed(1)} L from transporter ${delivery.deliveredBy} for site ${site.name}? This action is irreversible.`,
+                                      confirmLabel: 'Delete Delivery Note',
+                                      variant: 'danger',
+                                      onConfirm: () => onDeleteDelivery(delivery.id),
+                                    });
+                                  }}
+                                  className="p-1 px-1.5 text-rose-400 hover:text-rose-300 rounded hover:bg-[#FF3B30]/15 border border-transparent hover:border-rose-500/20 transition flex items-center gap-1 cursor-pointer"
+                                >
+                                  <Trash2 className="h-3 w-3" />
+                                </button>
+                              )}
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        );
+      }
       return (
         <>
           {/* Desktop Table View for Deliveries */}
@@ -902,7 +1181,7 @@ export default function AnalyticsDashboard({
                             </button>
                           )}
 
-                          {onDeleteDelivery && (
+                          {(currentUser?.role === 'management' || isDeveloper) && onDeleteDelivery && (
                             <button
                               type="button"
                               onClick={() => {
@@ -1035,7 +1314,7 @@ export default function AnalyticsDashboard({
                         </button>
                       )}
 
-                      {onDeleteDelivery && (
+                      {(currentUser?.role === 'management' || isDeveloper) && onDeleteDelivery && (
                         <button
                           type="button"
                           onClick={() => {
@@ -1157,22 +1436,24 @@ export default function AnalyticsDashboard({
                             {log.notes || '-'}
                           </td>
                           <td className="py-2 px-4 text-right">
-                            <button
-                              type="button"
-                              onClick={() => {
-                                triggerConfirm({
-                                  title: 'Delete Fuel Consumption Record',
-                                  message: `Are you sure you want to delete this fuel entry of ${(log.quantityLitres || 0).toFixed(1)} Litres for vehicle ${log.vehicleNumber} logged by ${log.agentName}? This action is permanent.`,
-                                  confirmLabel: 'Delete Entry',
-                                  variant: 'danger',
-                                  onConfirm: () => onDeleteLog(log.id),
-                                });
-                              }}
-                              className="p-1.5 text-rose-400 hover:text-rose-300 rounded hover:bg-rose-955/20 transition inline-block text-right cursor-pointer"
-                              title="Delete log entry"
-                            >
-                              <Trash2 className="h-3.5 w-3.5" />
-                            </button>
+                            {(currentUser?.role === 'management' || isDeveloper) && onDeleteLog && (
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  triggerConfirm({
+                                    title: 'Delete Fuel Consumption Record',
+                                    message: `Are you sure you want to delete this fuel entry of ${(log.quantityLitres || 0).toFixed(1)} Litres for vehicle ${log.vehicleNumber} logged by ${log.agentName}? This action is permanent.`,
+                                    confirmLabel: 'Delete Entry',
+                                    variant: 'danger',
+                                    onConfirm: () => onDeleteLog(log.id),
+                                  });
+                                }}
+                                className="p-1.5 text-rose-400 hover:text-rose-300 rounded hover:bg-rose-955/20 transition inline-block text-right cursor-pointer"
+                                title="Delete log entry"
+                              >
+                                <Trash2 className="h-3.5 w-3.5" />
+                              </button>
+                            )}
                           </td>
                         </tr>
                       ))}
@@ -1228,22 +1509,24 @@ export default function AnalyticsDashboard({
                           </button>
                         ) : null}
 
-                        <button
-                          type="button"
-                          onClick={() => {
-                            triggerConfirm({
-                              title: 'Delete Fuel Consumption Record',
-                              message: `Are you sure you want to delete this fuel entry of ${log.quantityLitres.toFixed(1)} Litres for vehicle ${log.vehicleNumber} logged by ${log.agentName}? This action is permanent.`,
-                              confirmLabel: 'Delete Entry',
-                              variant: 'danger',
-                              onConfirm: () => onDeleteLog(log.id),
-                            });
-                          }}
-                          className="p-1 px-2 text-rose-400 hover:text-rose-300 rounded hover:bg-rose-955/10 border border-transparent hover:border-rose-500/20 transition flex items-center gap-1 cursor-pointer"
-                        >
-                          <Trash2 className="h-3.5 w-3.5" />
-                          <span className="text-[10px] font-bold">Delete</span>
-                        </button>
+                        {(currentUser?.role === 'management' || isDeveloper) && onDeleteLog && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              triggerConfirm({
+                                title: 'Delete Fuel Consumption Record',
+                                message: `Are you sure you want to delete this fuel entry of ${log.quantityLitres.toFixed(1)} Litres for vehicle ${log.vehicleNumber} logged by ${log.agentName}? This action is permanent.`,
+                                confirmLabel: 'Delete Entry',
+                                variant: 'danger',
+                                onConfirm: () => onDeleteLog(log.id),
+                              });
+                            }}
+                            className="p-1 px-2 text-rose-400 hover:text-rose-300 rounded hover:bg-rose-955/10 border border-transparent hover:border-rose-500/20 transition flex items-center gap-1 cursor-pointer"
+                          >
+                            <Trash2 className="h-3.5 w-3.5" />
+                            <span className="text-[10px] font-bold">Delete</span>
+                          </button>
+                        )}
                       </div>
                     </div>
                   ))}
@@ -1326,22 +1609,24 @@ export default function AnalyticsDashboard({
                       {log.notes || '-'}
                     </td>
                     <td className="py-3 px-4 text-right whitespace-nowrap">
-                      <button
-                        type="button"
-                        onClick={() => {
-                          triggerConfirm({
-                            title: 'Delete Fuel Consumption Record',
-                            message: `Are you sure you want to delete this fuel entry of ${(log.quantityLitres || 0).toFixed(1)} Litres for vehicle ${log.vehicleNumber} logged by ${log.agentName}? This action is permanent.`,
-                            confirmLabel: 'Delete Entry',
-                            variant: 'danger',
-                            onConfirm: () => onDeleteLog(log.id),
-                          });
-                        }}
-                        className="p-1.5 text-rose-400 hover:text-rose-300 rounded hover:bg-[#FF3B30]/10 transition inline-block cursor-pointer"
-                        title="Delete log"
-                      >
-                        <Trash2 className="h-3.5 w-3.5" />
-                      </button>
+                      {(currentUser?.role === 'management' || isDeveloper) && onDeleteLog && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            triggerConfirm({
+                              title: 'Delete Fuel Consumption Record',
+                              message: `Are you sure you want to delete this fuel entry of ${(log.quantityLitres || 0).toFixed(1)} Litres for vehicle ${log.vehicleNumber} logged by ${log.agentName}? This action is permanent.`,
+                              confirmLabel: 'Delete Entry',
+                              variant: 'danger',
+                              onConfirm: () => onDeleteLog(log.id),
+                            });
+                          }}
+                          className="p-1.5 text-rose-400 hover:text-rose-300 rounded hover:bg-[#FF3B30]/10 transition inline-block cursor-pointer"
+                          title="Delete log"
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                        </button>
+                      )}
                     </td>
                   </tr>
                 );
@@ -1399,22 +1684,24 @@ export default function AnalyticsDashboard({
                       </button>
                     ) : null}
 
-                    <button
-                      type="button"
-                      onClick={() => {
-                        triggerConfirm({
-                          title: 'Delete Fuel Consumption Record',
-                          message: `Are you sure you want to delete this fuel entry of ${(log.quantityLitres || 0).toFixed(1)} Litres for vehicle ${log.vehicleNumber} logged by ${log.agentName}? This action is permanent.`,
-                          confirmLabel: 'Delete Entry',
-                          variant: 'danger',
-                          onConfirm: () => onDeleteLog(log.id),
-                        });
-                      }}
-                      className="p-1 px-2 text-rose-400 hover:text-rose-300 rounded hover:bg-rose-955/15 border border-transparent hover:border-rose-500/20 transition flex items-center gap-1 cursor-pointer"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                      <span className="text-[10px] font-bold">Delete</span>
-                    </button>
+                    {(currentUser?.role === 'management' || isDeveloper) && onDeleteLog && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          triggerConfirm({
+                            title: 'Delete Fuel Consumption Record',
+                            message: `Are you sure you want to delete this fuel entry of ${(log.quantityLitres || 0).toFixed(1)} Litres for vehicle ${log.vehicleNumber} logged by ${log.agentName}? This action is permanent.`,
+                            confirmLabel: 'Delete Entry',
+                            variant: 'danger',
+                            onConfirm: () => onDeleteLog(log.id),
+                          });
+                        }}
+                        className="p-1 px-2 text-rose-400 hover:text-rose-300 rounded hover:bg-rose-955/15 border border-transparent hover:border-rose-500/20 transition flex items-center gap-1 cursor-pointer"
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                        <span className="text-[10px] font-bold">Delete</span>
+                      </button>
+                    )}
                   </div>
                 </div>
 
@@ -2097,7 +2384,7 @@ export default function AnalyticsDashboard({
 
           <div className="flex flex-wrap items-center gap-2">
             {/* Visual Classification Toggle */}
-            <div className={`flex items-center gap-2 bg-[#161D32] border border-[#232F4C] px-3 py-1.5 rounded-lg transition-opacity ${reportTab === 'deliveries' ? 'opacity-30 pointer-events-none' : 'opacity-100'}`}>
+            <div className={`flex items-center gap-2 bg-[#161D32] border border-[#232F4C] px-3 py-1.5 rounded-lg transition-opacity ${reportTab === 'ai_balance' ? 'opacity-30 pointer-events-none' : 'opacity-100'}`}>
               <span className="text-xs font-semibold text-zinc-400 select-none">Classify/Group-by Site:</span>
               <button
                 id="group-by-site-toggle"
