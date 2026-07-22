@@ -1,6 +1,3 @@
-var __defProp = Object.defineProperty;
-var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
-
 // functions/api/[[path]].ts
 //
 // This version uses the D1 database (binding: DB, database: kmc-ledger) that was already
@@ -27,7 +24,6 @@ function jsonResponse(data, status = 200) {
     }
   });
 }
-__name(jsonResponse, "jsonResponse");
 
 function ensureId(item, prefix) {
   if (!item.id) {
@@ -35,7 +31,6 @@ function ensureId(item, prefix) {
   }
   return item;
 }
-__name(ensureId, "ensureId");
 
 // Upsert one row. ON CONFLICT DO UPDATE makes this idempotent: resending the same id just
 // overwrites that row's data, atomically, in a single statement.
@@ -54,7 +49,6 @@ function upsertStatement(db, table, item, companyId) {
      ON CONFLICT(id) DO UPDATE SET data = excluded.data, dateTime = excluded.dateTime`
   ).bind(item.id, companyId, dateTime, JSON.stringify(item));
 }
-__name(upsertStatement, "upsertStatement");
 
 async function loadCompanyData(db, companyId) {
   const [sitesRes, logsRes, deliveriesRes] = await Promise.all([
@@ -69,7 +63,6 @@ async function loadCompanyData(db, companyId) {
     deliveries: parse(deliveriesRes)
   };
 }
-__name(loadCompanyData, "loadCompanyData");
 
 async function onRequest(context) {
   const { request, env } = context;
@@ -473,4 +466,3 @@ Provide corrected vehicleMeterReading and quantityLitres where necessary. Mark i
     return jsonResponse({ error: err.message || "Internal server error inside serverless handler" }, 500);
   }
 }
-__name(onRequest, "onRequest");
