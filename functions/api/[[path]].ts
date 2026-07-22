@@ -474,27 +474,3 @@ Provide corrected vehicleMeterReading and quantityLitres where necessary. Mark i
   }
 }
 __name(onRequest, "onRequest");
-
-// src/worker.ts
-var worker_default = {
-  async fetch(request, env) {
-    const url = new URL(request.url);
-    if (url.pathname.startsWith("/api/")) {
-      const context = {
-        request,
-        env,
-        params: {},
-        next: /* @__PURE__ */ __name(async () => new Response("Not Found", { status: 404 }), "next")
-      };
-      return onRequest(context);
-    }
-    try {
-      return await env.ASSETS.fetch(request);
-    } catch (err) {
-      return new Response("Not Found", { status: 404 });
-    }
-  }
-};
-export {
-  worker_default as default
-};
