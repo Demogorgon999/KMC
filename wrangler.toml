@@ -11,12 +11,13 @@ compatibility_flags = [ "nodejs_compat" ]
 directory = "./dist"
 binding = "ASSETS"
 
-# Bind Cloudflare KV Namespace to persist diesel logs, sites, and deliveries
-# Once you have created a KV namespace in your Cloudflare dashboard (under Workers & Pages > KV),
-# uncomment the lines below and paste your real ID:
-# [[kv_namespaces]]
-# binding = "DATA_KV"
-# id = "YOUR_CLOUDFLARE_KV_NAMESPACE_ID"
+# D1 database binding - this makes the "DB" binding permanent across every deploy.
+# Without this block, `wrangler deploy` wipes out any binding added manually via
+# the dashboard, which is why the app kept losing its database connection.
+[[d1_databases]]
+binding = "DB"
+database_name = "kmc-ledger"
+database_id = "b5596a91-7370-481b-8316-e5b0352a1dd8"
 
 # Environment Variables
 [vars]
