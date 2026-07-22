@@ -94,7 +94,15 @@ export async function getSitesFromDB(companyId: string): Promise<ConstructionSit
   }
 }
 
+function isValidSite(site: any): boolean {
+  return !!(site && site.id && site.name && site.code && site.location);
+}
+
 export async function saveSiteToDB(site: ConstructionSite & { companyId: string }): Promise<void> {
+  if (!isValidSite(site)) {
+    console.error('saveSiteToDB rejected: site is missing required fields (name/code/location)', site);
+    return;
+  }
   try {
     await apiPost('/api/sync/site', { site, companyId: site.companyId });
   } catch (err) {
@@ -317,10 +325,15 @@ export function subscribeToRatesInDB(
 // collections not being written in this call.
 
 export async function saveSitesInBatchToDB(sites: (ConstructionSite & { companyId: string })[]): Promise<void> {
-  if (sites.length === 0) return;
-  const companyId = sites[0].companyId;
+  const validSites = sites.filter(isValidSite);
+  const rejected = sites.length - validSites.length;
+  if (rejected > 0) {
+    console.error(`saveSitesInBatchToDB rejected ${rejected} malformed site(s) (missing name/code/location)`, sites.filter(s => !isValidSite(s)));
+  }
+  if (validSites.length === 0) return;
+  const companyId = validSites[0].companyId;
   try {
-    await apiPost('/api/sync/data', { companyId, sites, logs: [], deliveries: [] });
+    await apiPost('/api/sync/data', { companyId, sites: validSites, logs: [], deliveries: [] });
   } catch (err) {
     console.error('saveSitesInBatchToDB failed:', err);
   }
