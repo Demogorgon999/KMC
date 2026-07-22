@@ -1,85 +1,108 @@
-// Cloudflare KV Namespace interface for TypeScript compilation
-interface KVNamespace {
-  get(key: string, options?: any): Promise<string | null>;
-  put(key: string, value: string, options?: any): Promise<void>;
-  delete(key: string): Promise<void>;
-}
+var __defProp = Object.defineProperty;
+var __name = (target, value) => __defProp(target, "name", { value, configurable: true });
 
-export interface Env {
-  DATA_KV?: KVNamespace;
-  GEMINI_API_KEY?: string;
-}
+// functions/api/[[path]].ts
+//
+// This version uses the D1 database (binding: DB, database: kmc-ledger) that was already
+// provisioned but never wired into the code. Previously the worker looked for a KV binding
+// called DATA_KV, which was never bound, so every request silently fell back to an in-memory
+// object that Cloudflare can wipe at any time (new deployment, instance recycle, etc). That
+// is why data kept disappearing regardless of the earlier bug fixes.
+//
+// D1 is a real SQLite-based database with ACID transactions. Writes are atomic per statement
+// (or per batch, using db.batch()), so the read-modify-write race condition that a shared KV
+// blob had is structurally impossible here.
+//
+// Run schema.sql in the D1 console (Storage & Databases -> D1 -> kmc-ledger -> Console)
+// before deploying this.
 
-interface RequestContext {
-  request: Request;
-  env: Env;
-  params: Record<string, string>;
-  next: () => Promise<Response>;
-}
-
-// In-memory fallback for local development or sandbox without KV bound
-const localMemoryStore: Record<string, string> = {};
-
-async function getData(env: Env, key: string): Promise<string | null> {
-  if (env.DATA_KV) {
-    return await env.DATA_KV.get(key);
-  }
-  return localMemoryStore[key] || null;
-}
-
-async function putData(env: Env, key: string, value: string): Promise<void> {
-  if (env.DATA_KV) {
-    await env.DATA_KV.put(key, value);
-  } else {
-    localMemoryStore[key] = value;
-  }
-}
-
-// Response helper
-function jsonResponse(data: any, status = 200): Response {
+function jsonResponse(data, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
     headers: {
       "Content-Type": "application/json",
       "Access-Control-Allow-Origin": "*",
       "Access-Control-Allow-Methods": "GET, POST, OPTIONS, DELETE",
-      "Access-Control-Allow-Headers": "Content-Type",
-    },
+      "Access-Control-Allow-Headers": "Content-Type"
+    }
   });
 }
+__name(jsonResponse, "jsonResponse");
 
-export async function onRequest(context: RequestContext): Promise<Response> {
+function ensureId(item, prefix) {
+  if (!item.id) {
+    item.id = `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+  }
+  return item;
+}
+__name(ensureId, "ensureId");
+
+// Upsert one row. ON CONFLICT DO UPDATE makes this idempotent: resending the same id just
+// overwrites that row's data, atomically, in a single statement.
+function upsertStatement(db, table, item, companyId) {
+  ensureId(item, table.slice(0, -1)); // "logs" -> "log" prefix, etc.
+  const dateTime = item.dateTime || null;
+  const realTable = `app_${table}`; // "sites" -> "app_sites", "logs" -> "app_logs", "deliveries" -> "app_deliveries"
+  if (table === "sites") {
+    return db.prepare(
+      `INSERT INTO ${realTable} (id, companyId, data) VALUES (?, ?, ?)
+       ON CONFLICT(id) DO UPDATE SET data = excluded.data`
+    ).bind(item.id, companyId, JSON.stringify(item));
+  }
+  return db.prepare(
+    `INSERT INTO ${realTable} (id, companyId, dateTime, data) VALUES (?, ?, ?, ?)
+     ON CONFLICT(id) DO UPDATE SET data = excluded.data, dateTime = excluded.dateTime`
+  ).bind(item.id, companyId, dateTime, JSON.stringify(item));
+}
+__name(upsertStatement, "upsertStatement");
+
+async function loadCompanyData(db, companyId) {
+  const [sitesRes, logsRes, deliveriesRes] = await Promise.all([
+    db.prepare(`SELECT data FROM app_sites WHERE companyId = ?`).bind(companyId).all(),
+    db.prepare(`SELECT data FROM app_logs WHERE companyId = ? ORDER BY dateTime DESC`).bind(companyId).all(),
+    db.prepare(`SELECT data FROM app_deliveries WHERE companyId = ? ORDER BY dateTime DESC`).bind(companyId).all()
+  ]);
+  const parse = (rows) => rows.results.map((r) => JSON.parse(r.data));
+  return {
+    sites: parse(sitesRes),
+    logs: parse(logsRes),
+    deliveries: parse(deliveriesRes)
+  };
+}
+__name(loadCompanyData, "loadCompanyData");
+
+async function onRequest(context) {
   const { request, env } = context;
   const url = new URL(request.url);
   const path = url.pathname;
+  const db = env.DB;
 
-  // Handle OPTIONS preflight requests for CORS
   if (request.method === "OPTIONS") {
     return new Response(null, {
       status: 204,
       headers: {
         "Access-Control-Allow-Origin": "*",
         "Access-Control-Allow-Methods": "GET, POST, OPTIONS, DELETE",
-        "Access-Control-Allow-Headers": "Content-Type",
-      },
+        "Access-Control-Allow-Headers": "Content-Type"
+      }
     });
   }
 
   try {
-    // 1. Health Check
     if (path === "/api/health") {
-      return jsonResponse({ status: "ok", environment: env.DATA_KV ? "production-kv" : "sandbox-memory" });
+      return jsonResponse({ status: "ok", environment: db ? "production-d1" : "no-db-bound" });
     }
 
-    // 2. Event Stream (SSE) fallback for Serverless
     if (path === "/api/events") {
       const encoder = new TextEncoder();
       const stream = new ReadableStream({
         start(controller) {
-          // Send initial active users and console events message to establish the tunnel
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "initial_active_users", data: { users: [] } })}\n\n`));
-          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "initial_console_events", data: { events: [] } })}\n\n`));
-          // Close immediately as long-running push connections require durable background instances
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "initial_active_users", data: { users: [] } })}
+
+`));
+          controller.enqueue(encoder.encode(`data: ${JSON.stringify({ type: "initial_console_events", data: { events: [] } })}
+
+`));
           controller.close();
         }
       });
@@ -88,249 +111,265 @@ export async function onRequest(context: RequestContext): Promise<Response> {
           "Content-Type": "text/event-stream",
           "Cache-Control": "no-cache",
           "Connection": "keep-alive",
-          "Access-Control-Allow-Origin": "*",
+          "Access-Control-Allow-Origin": "*"
         }
       });
     }
 
-    // 3. Heartbeat & Logout
     if (path === "/api/active-users/heartbeat") {
-      const body = await request.json().catch(() => ({})) as any;
+      const body = await request.json().catch(() => ({}));
       const { name, role } = body || {};
       return jsonResponse({
         success: true,
         users: name ? [{ id: "cf-user", email: body.email || "cf@kmc.co.za", name, role: role || "agent", lastSeen: Date.now() }] : []
       });
     }
-
     if (path === "/api/active-users/logout") {
       return jsonResponse({ success: true });
     }
 
-    // 4. Fetch complete database history
+    if (!db) {
+      return jsonResponse({ error: "D1 database not bound. Check the DB binding in Cloudflare Pages settings." }, 500);
+    }
+
+    // ---- GET full company data ----
     if (path === "/api/sync/data" && request.method === "GET") {
       const companyId = url.searchParams.get("companyId") || "company-kmc";
-      const dataStr = await getData(env, `company_${companyId}`);
-      const data = dataStr ? JSON.parse(dataStr) : { sites: [], logs: [], deliveries: [] };
+      const data = await loadCompanyData(db, companyId);
       return jsonResponse(data);
     }
 
-    // 5. Sync/Merge data
+    // ---- Full sync push: one atomic batch. Either the whole batch commits or none of it
+    // does — no partial writes, no interleaving with another agent's concurrent sync. ----
     if (path === "/api/sync/data" && request.method === "POST") {
-      const body = await request.json().catch(() => ({})) as any;
+      const body = await request.json().catch(() => ({}));
       const { companyId = "company-kmc", sites = [], logs = [], deliveries = [] } = body || {};
-      
-      const serverDataStr = await getData(env, `company_${companyId}`);
-      const serverData = serverDataStr ? JSON.parse(serverDataStr) : { sites: [], logs: [], deliveries: [] };
 
-      // Merge utilities
-      const mergeById = (serverList: any[], clientList: any[]) => {
-        const map = new Map<string, any>();
-        if (Array.isArray(clientList)) {
-          clientList.forEach(item => { if (item && item.id) map.set(item.id, item); });
-        }
-        if (Array.isArray(serverList)) {
-          serverList.forEach(item => { if (item && item.id) map.set(item.id, item); });
-        }
-        return Array.from(map.values());
-      };
+      const statements = [
+        ...sites.filter(Boolean).map((s) => upsertStatement(db, "sites", s, companyId)),
+        ...logs.filter(Boolean).map((l) => upsertStatement(db, "logs", l, companyId)),
+        ...deliveries.filter(Boolean).map((d) => upsertStatement(db, "deliveries", d, companyId))
+      ];
+      if (statements.length > 0) {
+        await db.batch(statements);
+      }
 
-      const mergedSites = mergeById(serverData.sites, sites);
-      const mergedLogs = mergeById(serverData.logs, logs);
-      const mergedDeliveries = mergeById(serverData.deliveries, deliveries);
-
-      const sortedLogs = mergedLogs.sort((a, b) => new Date(b.dateTime).getTime() - new Date(a.dateTime).getTime());
-      const sortedDeliveries = mergedDeliveries.sort((a, b) => new Date(b.dateTime).getTime() - new Date(a.dateTime).getTime());
-
-      const updatedData = {
-        sites: mergedSites,
-        logs: sortedLogs,
-        deliveries: sortedDeliveries
-      };
-
-      await putData(env, `company_${companyId}`, JSON.stringify(updatedData));
+      const updatedData = await loadCompanyData(db, companyId);
       return jsonResponse(updatedData);
     }
 
-    // 6. Sync Log (single)
+    // ---- Single log push ----
     if (path === "/api/sync/log" && request.method === "POST") {
-      const body = await request.json().catch(() => ({})) as any;
+      const body = await request.json().catch(() => ({}));
       const { log, companyId = "company-kmc" } = body || {};
       if (!log) return jsonResponse({ error: "Log payload missing" }, 400);
-
-      const dataStr = await getData(env, `company_${companyId}`);
-      const data = dataStr ? JSON.parse(dataStr) : { sites: [], logs: [], deliveries: [] };
-
-      if (log.id && log.id.startsWith("log-")) {
-        if (!data.logs.some((l: any) => l.id === log.id)) {
-          data.logs.unshift(log);
-          await putData(env, `company_${companyId}`, JSON.stringify(data));
-        }
-      }
-      return jsonResponse({ success: true });
+      await upsertStatement(db, "logs", log, companyId).run();
+      return jsonResponse({ success: true, id: log.id });
     }
 
-    // 7. Sync Logs Batch
+    // ---- Batch log push, as a single atomic D1 batch ----
     if (path === "/api/sync/logs-batch" && request.method === "POST") {
-      const body = await request.json().catch(() => ({})) as any;
+      const body = await request.json().catch(() => ({}));
       const { logs, companyId = "company-kmc" } = body || {};
       if (!logs || !Array.isArray(logs)) return jsonResponse({ error: "Logs array payload missing" }, 400);
 
-      const dataStr = await getData(env, `company_${companyId}`);
-      const data = dataStr ? JSON.parse(dataStr) : { sites: [], logs: [], deliveries: [] };
-      let added = 0;
-
-      logs.forEach((log: any) => {
-        if (log && log.id && log.id.startsWith("log-")) {
-          if (!data.logs.some((l: any) => l.id === log.id)) {
-            data.logs.unshift(log);
-            added++;
-          }
+      const skippedInvalid = [];
+      const validLogs = [];
+      logs.forEach((log) => {
+        if (!log || typeof log !== "object") {
+          skippedInvalid.push(log);
+          return;
         }
+        validLogs.push(log);
       });
 
-      if (added > 0) {
-        await putData(env, `company_${companyId}`, JSON.stringify(data));
+      if (validLogs.length > 0) {
+        const statements = validLogs.map((log) => upsertStatement(db, "logs", log, companyId));
+        await db.batch(statements);
       }
-      return jsonResponse({ success: true, count: added });
+
+      return jsonResponse({
+        success: true,
+        received: logs.length,
+        count: validLogs.length,
+        skippedInvalid
+      });
     }
 
-    // 8. Delete Log
     if (path === "/api/sync/delete-log" && request.method === "POST") {
-      const body = await request.json().catch(() => ({})) as any;
+      const body = await request.json().catch(() => ({}));
       const { logId, companyId = "company-kmc" } = body || {};
-      
-      const dataStr = await getData(env, `company_${companyId}`);
-      const data = dataStr ? JSON.parse(dataStr) : { sites: [], logs: [], deliveries: [] };
-      data.logs = data.logs.filter((l: any) => l.id !== logId);
-      
-      await putData(env, `company_${companyId}`, JSON.stringify(data));
+      if (!logId) return jsonResponse({ error: "logId missing" }, 400);
+      await db.prepare(`DELETE FROM app_logs WHERE id = ? AND companyId = ?`).bind(logId, companyId).run();
       return jsonResponse({ success: true });
     }
 
-    // 9. Sync Delivery
     if (path === "/api/sync/delivery" && request.method === "POST") {
-      const body = await request.json().catch(() => ({})) as any;
+      const body = await request.json().catch(() => ({}));
       const { delivery, companyId = "company-kmc" } = body || {};
       if (!delivery) return jsonResponse({ error: "Delivery payload missing" }, 400);
-
-      const dataStr = await getData(env, `company_${companyId}`);
-      const data = dataStr ? JSON.parse(dataStr) : { sites: [], logs: [], deliveries: [] };
-
-      if (!data.deliveries.some((d: any) => d.id === delivery.id)) {
-        data.deliveries.unshift(delivery);
-        await putData(env, `company_${companyId}`, JSON.stringify(data));
-      }
-      return jsonResponse({ success: true });
+      await upsertStatement(db, "deliveries", delivery, companyId).run();
+      return jsonResponse({ success: true, id: delivery.id });
     }
 
-    // 10. Delete Delivery
     if (path === "/api/sync/delete-delivery" && request.method === "POST") {
-      const body = await request.json().catch(() => ({})) as any;
+      const body = await request.json().catch(() => ({}));
       const { deliveryId, companyId = "company-kmc" } = body || {};
-
-      const dataStr = await getData(env, `company_${companyId}`);
-      const data = dataStr ? JSON.parse(dataStr) : { sites: [], logs: [], deliveries: [] };
-      data.deliveries = data.deliveries.filter((d: any) => d.id !== deliveryId);
-
-      await putData(env, `company_${companyId}`, JSON.stringify(data));
+      if (!deliveryId) return jsonResponse({ error: "deliveryId missing" }, 400);
+      await db.prepare(`DELETE FROM app_deliveries WHERE id = ? AND companyId = ?`).bind(deliveryId, companyId).run();
       return jsonResponse({ success: true });
     }
 
-    // 11. Override Delivery
     if (path === "/api/sync/override-delivery" && request.method === "POST") {
-      const body = await request.json().catch(() => ({})) as any;
+      const body = await request.json().catch(() => ({}));
       const { deliveryId, userName, reason, companyId = "company-kmc" } = body || {};
-
-      const dataStr = await getData(env, `company_${companyId}`);
-      const data = dataStr ? JSON.parse(dataStr) : { sites: [], logs: [], deliveries: [] };
-      data.deliveries = data.deliveries.map((d: any) => {
-        if (d.id === deliveryId) {
-          return {
-            ...d,
-            isOverridden: true,
-            overrideReason: reason,
-            overriddenBy: userName || "Management"
-          };
-        }
-        return d;
-      });
-
-      await putData(env, `company_${companyId}`, JSON.stringify(data));
+      const row = await db.prepare(`SELECT data FROM app_deliveries WHERE id = ? AND companyId = ?`).bind(deliveryId, companyId).first();
+      if (!row) return jsonResponse({ error: "Delivery not found" }, 404);
+      const delivery = JSON.parse(row.data);
+      const updated = {
+        ...delivery,
+        isOverridden: true,
+        overrideReason: reason,
+        overriddenBy: userName || "Management"
+      };
+      await db.prepare(`UPDATE app_deliveries SET data = ? WHERE id = ? AND companyId = ?`)
+        .bind(JSON.stringify(updated), deliveryId, companyId).run();
       return jsonResponse({ success: true });
     }
 
-    // 12. Add Site
     if (path === "/api/sync/site" && request.method === "POST") {
-      const body = await request.json().catch(() => ({})) as any;
+      const body = await request.json().catch(() => ({}));
       const { site, companyId = "company-kmc" } = body || {};
       if (!site) return jsonResponse({ error: "Site payload missing" }, 400);
+      await upsertStatement(db, "sites", site, companyId).run();
+      return jsonResponse({ success: true, id: site.id });
+    }
 
-      const dataStr = await getData(env, `company_${companyId}`);
-      const data = dataStr ? JSON.parse(dataStr) : { sites: [], logs: [], deliveries: [] };
+    if (path === "/api/sync/toggle-site" && request.method === "POST") {
+      const body = await request.json().catch(() => ({}));
+      const { siteId, status, companyId = "company-kmc" } = body || {};
+      const row = await db.prepare(`SELECT data FROM app_sites WHERE id = ? AND companyId = ?`).bind(siteId, companyId).first();
+      if (!row) return jsonResponse({ error: "Site not found" }, 404);
+      const site = JSON.parse(row.data);
+      const updated = {
+        ...site,
+        status,
+        closedAt: status === "closed" ? (/* @__PURE__ */ new Date()).toISOString() : null
+      };
+      await db.prepare(`UPDATE app_sites SET data = ? WHERE id = ? AND companyId = ?`)
+        .bind(JSON.stringify(updated), siteId, companyId).run();
+      return jsonResponse({ success: true });
+    }
 
-      if (!data.sites.some((s: any) => s.id === site.id)) {
-        data.sites.push(site);
-        await putData(env, `company_${companyId}`, JSON.stringify(data));
+    if (path === "/api/sync/reset-data" && request.method === "POST") {
+      const body = await request.json().catch(() => ({}));
+      const { companyId = "company-kmc" } = body || {};
+      await db.batch([
+        db.prepare(`DELETE FROM app_sites WHERE companyId = ?`).bind(companyId),
+        db.prepare(`DELETE FROM app_logs WHERE companyId = ?`).bind(companyId),
+        db.prepare(`DELETE FROM app_deliveries WHERE companyId = ?`).bind(companyId)
+      ]);
+      return jsonResponse({ success: true });
+    }
+
+    if (path === "/api/sync/load-test-data" && request.method === "POST") {
+      const body = await request.json().catch(() => ({}));
+      const { sites = [], logs = [], deliveries = [], companyId = "company-kmc" } = body || {};
+      await db.batch([
+        db.prepare(`DELETE FROM app_sites WHERE companyId = ?`).bind(companyId),
+        db.prepare(`DELETE FROM app_logs WHERE companyId = ?`).bind(companyId),
+        db.prepare(`DELETE FROM app_deliveries WHERE companyId = ?`).bind(companyId)
+      ]);
+      const statements = [
+        ...sites.filter(Boolean).map((s) => upsertStatement(db, "sites", s, companyId)),
+        ...logs.filter(Boolean).map((l) => upsertStatement(db, "logs", l, companyId)),
+        ...deliveries.filter(Boolean).map((d) => upsertStatement(db, "deliveries", d, companyId))
+      ];
+      if (statements.length > 0) {
+        await db.batch(statements);
       }
       return jsonResponse({ success: true });
     }
 
-    // 13. Toggle Site
-    if (path === "/api/sync/toggle-site" && request.method === "POST") {
-      const body = await request.json().catch(() => ({})) as any;
-      const { siteId, status, companyId = "company-kmc" } = body || {};
+    // ==================== COMPANIES API ====================
+    if (path === "/api/data/companies" && request.method === "GET") {
+      const rows = await db.prepare(`SELECT data FROM app_companies`).all();
+      return jsonResponse(rows.results.map((r) => JSON.parse(r.data)));
+    }
+    if (path === "/api/data/company" && request.method === "POST") {
+      const body = await request.json().catch(() => ({}));
+      const { company } = body || {};
+      if (!company || !company.id) return jsonResponse({ error: "Company payload missing id" }, 400);
+      await db.prepare(
+        `INSERT INTO app_companies (id, data) VALUES (?, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data`
+      ).bind(company.id, JSON.stringify(company)).run();
+      return jsonResponse({ success: true });
+    }
 
-      const dataStr = await getData(env, `company_${companyId}`);
-      const data = dataStr ? JSON.parse(dataStr) : { sites: [], logs: [], deliveries: [] };
-      data.sites = data.sites.map((s: any) => {
-        if (s.id === siteId) {
-          return {
-            ...s,
-            status,
-            closedAt: status === "closed" ? new Date().toISOString() : null,
-          };
-        }
-        return s;
+    // ==================== USERS API ====================
+    if (path === "/api/data/users" && request.method === "GET") {
+      const rows = await db.prepare(`SELECT data FROM app_users`).all();
+      return jsonResponse(rows.results.map((r) => JSON.parse(r.data)));
+    }
+    if (path === "/api/data/user" && request.method === "POST") {
+      const body = await request.json().catch(() => ({}));
+      const { user } = body || {};
+      if (!user) return jsonResponse({ error: "User payload missing" }, 400);
+      const userId = user.id || (user.email || "").toLowerCase();
+      if (!userId) return jsonResponse({ error: "User payload missing id/email" }, 400);
+      await db.prepare(
+        `INSERT INTO app_users (id, companyId, data) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data, companyId = excluded.companyId`
+      ).bind(userId, user.companyId || null, JSON.stringify({ ...user, id: userId })).run();
+      return jsonResponse({ success: true });
+    }
+
+    // ==================== RATES API ====================
+    if (path === "/api/data/rates" && request.method === "GET") {
+      const companyId = url.searchParams.get("companyId") || "company-kmc";
+      const rows = await db.prepare(`SELECT data FROM app_rates WHERE companyId = ?`).bind(companyId).all();
+      return jsonResponse(rows.results.map((r) => JSON.parse(r.data)));
+    }
+    if (path === "/api/data/rate" && request.method === "POST") {
+      const body = await request.json().catch(() => ({}));
+      const { rate } = body || {};
+      if (!rate || !rate.id || !rate.companyId) return jsonResponse({ error: "Rate payload missing id/companyId" }, 400);
+      await db.prepare(
+        `INSERT INTO app_rates (id, companyId, data) VALUES (?, ?, ?) ON CONFLICT(id) DO UPDATE SET data = excluded.data`
+      ).bind(rate.id, rate.companyId, JSON.stringify(rate)).run();
+      return jsonResponse({ success: true });
+    }
+
+    // ---- Reconciliation / audit endpoint: live counts straight from the database ----
+    if (path === "/api/sync/audit" && request.method === "GET") {
+      const companyId = url.searchParams.get("companyId") || "company-kmc";
+      const [sitesCount, logsCount, deliveriesCount] = await Promise.all([
+        db.prepare(`SELECT COUNT(*) as c FROM app_sites WHERE companyId = ?`).bind(companyId).first(),
+        db.prepare(`SELECT COUNT(*) as c FROM app_logs WHERE companyId = ?`).bind(companyId).first(),
+        db.prepare(`SELECT COUNT(*) as c FROM app_deliveries WHERE companyId = ?`).bind(companyId).first()
+      ]);
+      return jsonResponse({
+        companyId,
+        counts: {
+          sites: sitesCount.c,
+          logs: logsCount.c,
+          deliveries: deliveriesCount.c
+        },
+        generatedAt: (/* @__PURE__ */ new Date()).toISOString()
       });
-
-      await putData(env, `company_${companyId}`, JSON.stringify(data));
-      return jsonResponse({ success: true });
     }
 
-    // 14. Reset Data
-    if (path === "/api/sync/reset-data" && request.method === "POST") {
-      const body = await request.json().catch(() => ({})) as any;
-      const { companyId = "company-kmc" } = body || {};
-      const data = { sites: [], logs: [], deliveries: [] };
-      await putData(env, `company_${companyId}`, JSON.stringify(data));
-      return jsonResponse({ success: true });
-    }
-
-    // 15. Load Test Data
-    if (path === "/api/sync/load-test-data" && request.method === "POST") {
-      const body = await request.json().catch(() => ({})) as any;
-      const { sites = [], logs = [], deliveries = [], companyId = "company-kmc" } = body || {};
-      const data = { sites, logs, deliveries };
-      await putData(env, `company_${companyId}`, JSON.stringify(data));
-      return jsonResponse({ success: true });
-    }
-
-    // 16. AI Balance Shifts
     if (path === "/api/ai/balance-shifts" && request.method === "POST") {
-      const body = await request.json().catch(() => ({})) as any;
+      const body = await request.json().catch(() => ({}));
       const { logs } = body || {};
       if (!logs || !Array.isArray(logs)) {
         return jsonResponse({ error: "Missing required logs array" }, 400);
       }
-
       const apiKey = env.GEMINI_API_KEY;
       if (!apiKey) {
         return jsonResponse({
           error: "Gemini API key is not configured in Cloudflare. Please set GEMINI_API_KEY environment variable in your Pages Dashboard."
         }, 400);
       }
-
       const prompt = `
 You are an expert diesel auditor for construction site fuel tanks and fleet management at KMC Construction.
 Your task is to balance and reconcile the refueling logs (or meter readings/litres) for a site's shift logs (Day shift and Night shift).
@@ -353,13 +392,12 @@ ${JSON.stringify(logs)}
 Analyze each log, categorize it into Day Shift (06:00-18:00) or Night Shift (18:00-06:00), and balance them according to the rules above.
 Provide corrected vehicleMeterReading and quantityLitres where necessary. Mark if adjusted (isBalanced: true) and explain why in explanation.
 `;
-
       const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent?key=${apiKey}`;
       const geminiResponse = await fetch(geminiUrl, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          "User-Agent": "aistudio-build",
+          "User-Agent": "aistudio-build"
         },
         body: JSON.stringify({
           contents: [{ parts: [{ text: prompt }] }],
@@ -396,52 +434,67 @@ Provide corrected vehicleMeterReading and quantityLitres where necessary. Mark i
           }
         })
       });
-
       if (!geminiResponse.ok) {
         const errorText = await geminiResponse.text();
         return jsonResponse({ error: `Gemini API returned error: ${errorText}` }, 500);
       }
-
-      const geminiResult = await geminiResponse.json() as any;
+      const geminiResult = await geminiResponse.json();
       const text = geminiResult.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
       return jsonResponse(JSON.parse(text));
     }
 
-    // 17. AI Save Balanced
     if (path === "/api/ai/save-balanced" && request.method === "POST") {
-      const body = await request.json().catch(() => ({})) as any;
+      const body = await request.json().catch(() => ({}));
       const { balancedLogs, companyId = "company-kmc" } = body || {};
       if (!Array.isArray(balancedLogs)) {
         return jsonResponse({ error: "Missing balancedLogs array" }, 400);
       }
-
-      const dataStr = await getData(env, `company_${companyId}`);
-      const data = dataStr ? JSON.parse(dataStr) : { sites: [], logs: [], deliveries: [] };
       let updatedCount = 0;
-
-      data.logs = data.logs.map((log: any) => {
-        const balanced = balancedLogs.find((bl: any) => bl.id === log.id);
-        if (balanced) {
-          updatedCount++;
-          return {
-            ...log,
-            quantityLitres: balanced.quantityLitres,
-            vehicleMeterReading: balanced.vehicleMeterReading,
-            notes: balanced.explanation ? `[AI Balanced: ${balanced.explanation}] ${log.notes || ""}`.trim() : log.notes
-          };
-        }
-        return log;
-      });
-
-      if (updatedCount > 0) {
-        await putData(env, `company_${companyId}`, JSON.stringify(data));
+      for (const balanced of balancedLogs) {
+        if (!balanced || !balanced.id) continue;
+        const row = await db.prepare(`SELECT data FROM app_logs WHERE id = ? AND companyId = ?`).bind(balanced.id, companyId).first();
+        if (!row) continue;
+        const log = JSON.parse(row.data);
+        const updated = {
+          ...log,
+          quantityLitres: balanced.quantityLitres,
+          vehicleMeterReading: balanced.vehicleMeterReading,
+          notes: balanced.explanation ? `[AI Balanced: ${balanced.explanation}] ${log.notes || ""}`.trim() : log.notes
+        };
+        await db.prepare(`UPDATE app_logs SET data = ? WHERE id = ? AND companyId = ?`)
+          .bind(JSON.stringify(updated), balanced.id, companyId).run();
+        updatedCount++;
       }
-
       return jsonResponse({ success: true, count: updatedCount });
     }
 
     return new Response("Not Found", { status: 404 });
-  } catch (err: any) {
+  } catch (err) {
     return jsonResponse({ error: err.message || "Internal server error inside serverless handler" }, 500);
   }
 }
+__name(onRequest, "onRequest");
+
+// src/worker.ts
+var worker_default = {
+  async fetch(request, env) {
+    const url = new URL(request.url);
+    if (url.pathname.startsWith("/api/")) {
+      const context = {
+        request,
+        env,
+        params: {},
+        next: /* @__PURE__ */ __name(async () => new Response("Not Found", { status: 404 }), "next")
+      };
+      return onRequest(context);
+    }
+    try {
+      return await env.ASSETS.fetch(request);
+    } catch (err) {
+      return new Response("Not Found", { status: 404 });
+    }
+  }
+};
+export {
+  worker_default as default
+};
