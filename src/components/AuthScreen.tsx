@@ -14,7 +14,7 @@ import {
   getUsersFromDB, 
   saveCompanyToDB, 
   saveUserToDB 
-} from '../lib/firebase';
+} from '../lib/api';
 
 // Helper to load users from localStorage
 const getUsers = (): User[] => {
