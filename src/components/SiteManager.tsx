@@ -112,6 +112,13 @@ export default function SiteManager({ sites, logs, onAddSite, onToggleSiteStatus
 
   // Filter sites
   const filteredSites = sites.filter((site) => {
+    // Defensive guard: skip any malformed record instead of crashing the whole page.
+    // A well-formed site should always have these fields, but this ensures a single
+    // bad record (from any source) never takes down Project Sites Manager again.
+    if (!site || !site.name || !site.code || !site.location) {
+      console.error('Skipping malformed site record (missing name/code/location):', site);
+      return false;
+    }
     const matchesSearch = 
       site.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
       site.code.toLowerCase().includes(searchQuery.toLowerCase()) ||
