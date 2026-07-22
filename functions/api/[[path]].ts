@@ -64,7 +64,7 @@ async function loadCompanyData(db, companyId) {
   };
 }
 
-async function onRequest(context) {
+export async function onRequest(context) {
   const { request, env } = context;
   const url = new URL(request.url);
   const path = url.pathname;
