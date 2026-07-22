@@ -37,7 +37,7 @@ import {
   saveSitesInBatchToDB,
   saveLogsInBatchToDB,
   saveDeliveriesInBatchToDB
-} from './lib/firebase';
+} from './lib/api';
 
 export default function App() {
   // Main states
@@ -419,7 +419,10 @@ export default function App() {
       localStorage.setItem(`apex_diesel_rates_${companyId}`, JSON.stringify(dbRates));
     });
 
-    // 3. Fetch ground-truth records from Firestore directly and sync in background
+    // 3. D1 is now the single source of truth (Firestore has been removed).
+    // We only need to push up anything that was captured locally while offline
+    // (e.g. a log entered with no network) - no more cross-database "healing",
+    // since there's only one database to reconcile against.
     const loadAndSynchronizeDB = async () => {
       try {
         const dbSites = await getSitesFromDB(companyId);
@@ -429,56 +432,11 @@ export default function App() {
 
         if (!active) return;
 
-        // Fetch server-side master JSON file backup data to self-heal and restore Firestore if it got reset/deleted
-        let serverSites: ConstructionSite[] = [];
-        let serverLogs: DieselLog[] = [];
-        let serverDeliveries: DieselDelivery[] = [];
-        try {
-          const srvRes = await fetch(`/api/sync/data?companyId=${companyId}`);
-          if (srvRes.ok) {
-            const srvData = await srvRes.json();
-            serverSites = srvData.sites || [];
-            serverLogs = srvData.logs || [];
-            serverDeliveries = srvData.deliveries || [];
-          }
-        } catch (srvErr) {
-          console.warn("Failed to fetch server master backup during sync:", srvErr);
-        }
-
-        // Identify items present in server master ledger file but completely missing in Firestore database
-        const missingInDBSites = serverSites.filter(srv => !dbSites.some(db => db.id === srv.id));
-        const missingInDBLogs = serverLogs.filter(srv => !dbLogs.some(db => db.id === srv.id));
-        const missingInDBDeliveries = serverDeliveries.filter(srv => !dbDeliveries.some(db => db.id === srv.id));
-
-        let didHealFirestore = false;
-        if (missingInDBSites.length > 0) {
-          didHealFirestore = true;
-          await saveSitesInBatchToDB(missingInDBSites.map(s => ({ ...s, companyId })));
-        }
-        if (missingInDBLogs.length > 0) {
-          didHealFirestore = true;
-          await saveLogsInBatchToDB(missingInDBLogs.map(l => ({ ...l, companyId })));
-        }
-        if (missingInDBDeliveries.length > 0) {
-          didHealFirestore = true;
-          await saveDeliveriesInBatchToDB(missingInDBDeliveries.map(d => ({ ...d, companyId })));
-        }
-
-        // If Firestore had to be healed, refetch ground-truth
-        let currentDBSites = dbSites;
-        let currentDBLogs = dbLogs;
-        let currentDBDeliveries = dbDeliveries;
-        if (didHealFirestore) {
-          currentDBSites = await getSitesFromDB(companyId);
-          currentDBLogs = await getLogsFromDB(companyId);
-          currentDBDeliveries = await getDeliveriesFromDB(companyId);
-        }
-
-        // Perform bidirectional offline-first merging:
-        // Find local-only items that are present in client's local states but absent in central database
-        const localOnlySites = parsedSites.filter(local => !currentDBSites.some(db => db.id === local.id));
-        const localOnlyLogs = parsedLogs.filter(local => !currentDBLogs.some(db => db.id === local.id));
-        const localOnlyDeliveries = parsedDeliveries.filter(local => !currentDBDeliveries.some(db => db.id === local.id));
+        // Find local-only items: present in this browser's offline cache but
+        // absent from the central database (i.e. captured while offline).
+        const localOnlySites = parsedSites.filter(local => !dbSites.some(db => db.id === local.id));
+        const localOnlyLogs = parsedLogs.filter(local => !dbLogs.some(db => db.id === local.id));
+        const localOnlyDeliveries = parsedDeliveries.filter(local => !dbDeliveries.some(db => db.id === local.id));
         const localOnlyRates = parsedRates.filter(local => !dbRates.some(db => db.id === local.id));
 
         let didUploadLocal = false;
@@ -487,17 +445,14 @@ export default function App() {
           didUploadLocal = true;
           await saveSitesInBatchToDB(localOnlySites.map(s => ({ ...s, companyId })));
         }
-
         if (localOnlyLogs.length > 0) {
           didUploadLocal = true;
           await saveLogsInBatchToDB(localOnlyLogs.map(l => ({ ...l, companyId })));
         }
-
         if (localOnlyDeliveries.length > 0) {
           didUploadLocal = true;
           await saveDeliveriesInBatchToDB(localOnlyDeliveries.map(d => ({ ...d, companyId })));
         }
-
         if (localOnlyRates.length > 0) {
           didUploadLocal = true;
           for (const r of localOnlyRates) {
@@ -505,22 +460,18 @@ export default function App() {
           }
         }
 
-        let finalSites = currentDBSites;
-        let finalLogs = currentDBLogs;
-        let finalDeliveries = currentDBDeliveries;
-        let finalRates = dbRates;
+        let finalSites = dbSites;
+        let finalLogs = dbLogs;
+        let finalDeliveries = dbDeliveries;
 
-        // If local data was updated online, refetch to acquire the fully authenticated central dataset
-        if (didUploadLocal || didHealFirestore) {
+        if (didUploadLocal) {
           finalSites = await getSitesFromDB(companyId);
           finalLogs = await getLogsFromDB(companyId);
           finalDeliveries = await getDeliveriesFromDB(companyId);
-          finalRates = await getRatesFromDB(companyId);
 
           const syncUserName = currentUser ? currentUser.name : "Yolandie Bezuidenhoudt";
-          const countsText = `${localOnlySites.length + missingInDBSites.length} sites, ${localOnlyLogs.length + missingInDBLogs.length} logs, ${localOnlyDeliveries.length + missingInDBDeliveries.length} deliveries, ${localOnlyRates.length} rates`;
+          const countsText = `${localOnlySites.length} sites, ${localOnlyLogs.length} logs, ${localOnlyDeliveries.length} deliveries, ${localOnlyRates.length} rates`;
 
-          // Log the synchronized upload to the Developer HUB event ticker.
           fetch('/api/sync/log', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -533,30 +484,18 @@ export default function App() {
                 vehicleNumber: 'N/A',
                 dateTime: new Date().toISOString(),
                 agentName: syncUserName,
-                notes: `Synchronized offline browser data and restored server-backup to Firebase: ${countsText}`,
+                notes: `Uploaded offline-captured browser data: ${countsText}`,
                 createdAt: new Date().toISOString()
               },
-              userName: `Sync Service: Merged and persistent-uploaded offline/server-backup data from ${syncUserName}'s browser (${countsText}) to Firestore`,
+              userName: `Sync Service: uploaded offline data from ${syncUserName}'s browser (${countsText})`,
               companyId
             })
           }).catch(() => {});
         }
 
-        // Re-verify ordering: newest entries first
-        const sortedLogs = finalLogs.sort((a, b) => new Date(b.dateTime).getTime() - new Date(a.dateTime).getTime());
-        const sortedDeliveries = finalDeliveries.sort((a, b) => new Date(b.dateTime).getTime() - new Date(a.dateTime).getTime());
-
-        // Notify server SSE hub of complete merged data
-        await fetch(`/api/sync/data`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            companyId,
-            sites: finalSites,
-            logs: sortedLogs,
-            deliveries: sortedDeliveries
-          })
-        });
+        setSites(finalSites);
+        setLogs(finalLogs.sort((a, b) => new Date(b.dateTime).getTime() - new Date(a.dateTime).getTime()));
+        setDeliveries(finalDeliveries.sort((a, b) => new Date(b.dateTime).getTime() - new Date(a.dateTime).getTime()));
 
         if (active) {
           setFirestoreSyncStatus('synced');
